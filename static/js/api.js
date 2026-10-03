@@ -23,9 +23,12 @@ window.Api = (function () {
     put: (u, b) => request("PUT", u, b),
     patch: (u, b) => request("PATCH", u, b),
     del: (u) => request("DELETE", u),
-    upload(files) {
+    upload(files, fields) {
       const fd = new FormData();
       for (const f of files) fd.append("files", f);
+      if (fields) {
+        for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+      }
       return request("POST", "/api/images", fd, true);
     },
   };

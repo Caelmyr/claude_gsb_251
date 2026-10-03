@@ -35,12 +35,18 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
-def _image_view(rec):
-    """给前端用的图像记录视图（附加缩略图/文件 URL）。"""
+def _image_view(rec, dup_counts=None):
+    """给前端用的图像记录视图（附加缩略图/文件 URL）。
+
+    dup_counts: {content_hash: 同内容记录数}，用于展示「该内容被上传了几次」。
+    """
+    copies = (dup_counts or {}).get(rec.get("content_hash"), 1)
     return {
         "id": rec["id"], "filename": rec["filename"], "format": rec["format"],
         "width": rec["width"], "height": rec["height"],
         "size_bytes": rec["size_bytes"], "created_at": rec["created_at"],
+        "content_hash": rec.get("content_hash") or rec.get("hash"),
+        "duplicate_count": copies,
         "tags": rec.get("tags", []), "note": rec.get("note", ""),
         "annotations": rec.get("annotations", []),
         "thumbnail_url": f"/api/images/{rec['id']}/thumbnail",
@@ -147,7 +153,12 @@ def reconcile():
 # ---------------------------------------------------------------------------
 @bp.get("/images")
 def list_images():
-    return jsonify({"images": [_image_view(r) for r in image_store.list_records()]})
+    dup_counts = image_store.duplicate_counts()
+    return jsonify({"images": [_image_view(r, dup_counts) for r in image_store.list_records()]})
+
+
+# 支持的重复内容处理策略
+_DUP_POLICIES = {"ask", "keep", "merge", "merge_new"}
 
 
 @bp.post("/images")
@@ -155,20 +166,95 @@ def upload_images():
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "未收到文件"}), 400
-    saved, skipped = [], []
+
+    # 全局策略（form 字段 on_duplicate），默认 ask：先查重、由用户决定
+    policy = (request.form.get("on_duplicate") or "ask").strip()
+    if policy not in _DUP_POLICIES:
+        return jsonify({"error": f"未知的重复处理策略：{policy}"}), 400
+
+    # 先读出全部字节（预检与正式保存共用，避免二次请求重传字节）
+    items, skipped = [], []
     for f in files:
         data = f.read()
+        if not data:
+            continue
         if len(data) > config.MAX_UPLOAD_BYTES:
             skipped.append({"filename": f.filename, "reason": "超过大小限制"})
             continue
-        if not data:
-            continue
+        items.append({"filename": f.filename or "upload", "data": data})
+
+    # ask 模式：先全量预检，发现任何内容重复（含本批次内部重复）就整体返回，
+    # 不写入任何记录，由前端弹窗让用户逐张选择后带策略重发。
+    if policy == "ask":
+        # 先统计本批次内每个哈希出现的索引（含与库内已有的同名内容）
+        batch_indices = {}
+        for idx, item in enumerate(items):
+            batch_indices.setdefault(
+                image_store.content_hash_of(item["data"]), []).append(idx)
+
+        duplicates = []
+        for chash, indices in batch_indices.items():
+            existing = image_store.find_by_content(chash)
+            first_in_batch = indices[0]
+            for dup_idx in indices[1:]:
+                duplicates.append({
+                    "index": dup_idx,
+                    "filename": items[dup_idx]["filename"],
+                    "content_hash": chash,
+                    "existing": _image_view(existing) if existing else None,
+                    "batch_peer_index": first_in_batch if existing is None else None,
+                })
+            # 库内已有该内容：本批次第一张也算重复（需用户决定 keep/merge）
+            if existing is not None:
+                duplicates.append({
+                    "index": first_in_batch,
+                    "filename": items[first_in_batch]["filename"],
+                    "content_hash": chash,
+                    "existing": _image_view(existing),
+                    "batch_peer_index": None,
+                })
+        duplicates.sort(key=lambda d: d["index"])
+        if duplicates:
+            dup_indices = {d["index"] for d in duplicates}
+            return jsonify({
+                "saved": [], "merged": [], "skipped": skipped,
+                "duplicates": duplicates,
+                "pending": [{"index": i, "filename": it["filename"]}
+                            for i, it in enumerate(items) if i not in dup_indices],
+                "need_choice": True,
+            })
+        policy = "keep"   # 预检无重复：全部按新记录保存
+
+    # 逐文件策略可覆盖全局策略（form 字段 on_duplicate_<index>）
+    saved, merged = [], []
+    for idx, item in enumerate(items):
+        item_policy = policy
+        # 前端按 on_duplicate_0、on_duplicate_1 … 提交
+        per = request.form.get(f"on_duplicate_{idx}")
+        if per:
+            per = per.strip()
+            if per not in _DUP_POLICIES:
+                return jsonify({"error": f"未知的重复处理策略：{per}"}), 400
+            item_policy = per
+        tags = None
+        raw_tags = request.form.get(f"tags_{idx}")
+        if raw_tags is not None:
+            tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        name = request.form.get(f"filename_{idx}") or item["filename"]
         try:
-            rec = image_store.save_upload(data, f.filename or "upload")
-            saved.append(_image_view(rec))
+            rec, status = image_store.save_upload(
+                item["data"], name, policy=item_policy, tags=tags)
         except Exception as exc:  # noqa: BLE001
-            skipped.append({"filename": f.filename, "reason": str(exc)})
-    return jsonify({"saved": saved, "skipped": skipped})
+            skipped.append({"filename": item["filename"], "reason": str(exc)})
+            continue
+        view = _image_view(rec, image_store.duplicate_counts())
+        view["status"] = status
+        if status == "created":
+            saved.append(view)
+        else:  # merged / merged_new
+            merged.append(view)
+    return jsonify({"saved": saved, "merged": merged, "skipped": skipped,
+                    "need_choice": False})
 
 
 @bp.get("/images/<image_id>")
