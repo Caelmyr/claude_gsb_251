@@ -92,6 +92,7 @@ a { color: var(--accent); }
 .card-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-dim { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
 .card-badge { position: absolute; top: 6px; right: 6px; background: rgba(0,0,0,.55); color: #fff; font-size: 10px; padding: 1px 6px; border-radius: 5px; }
+.card-dup { position: absolute; top: 6px; left: 6px; background: rgba(245,181,68,.92); color: #1b1206; font-size: 10px; font-weight: 650; padding: 1px 6px; border-radius: 5px; }
 
 /* ---------- 按钮 ---------- */
 .btn {
@@ -229,3 +230,28 @@ input[type="color"] { width: 100%; height: 34px; border: 1px solid var(--border-
 
 .keypoint-stats { font-size: 12px; color: var(--text-dim); }
 .desc-preview { font-family: var(--mono); font-size: 11px; color: var(--text-faint); word-break: break-all; max-height: 90px; overflow: auto; background: var(--bg-soft); padding: 8px; border-radius: var(--radius-sm); }
+
+/* ---------- 重复上传提示 ---------- */
+.dup-pill { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 20px;
+  background: rgba(245,181,68,.16); border: 1px solid rgba(245,181,68,.5); color: var(--amber); vertical-align: middle; }
+.dup-box { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.dup-title { font-size: 12px; font-weight: 650; color: var(--amber); margin-bottom: 8px; }
+.dup-item { display: flex; gap: 8px; align-items: center; padding: 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); margin-bottom: 6px; cursor: pointer; background: var(--bg-soft); }
+.dup-item:hover { border-color: var(--accent); }
+.dup-item.is-self { border-color: rgba(245,181,68,.55); }
+.dup-item img { width: 42px; height: 42px; object-fit: cover; border-radius: 5px; flex: none; background: #0b0f15; }
+.dup-info { min-width: 0; font-size: 11px; }
+.dup-name { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dup-warn { background: rgba(245,181,68,.12); border: 1px solid rgba(245,181,68,.5);
+  border-radius: var(--radius-sm); padding: 10px 12px; font-size: 12px; color: var(--text); margin-bottom: 14px; }
+.dup-row { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 12px; background: var(--bg-soft); }
+.dup-row-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.dup-row-head img { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; flex: none; background: #0b0f15; }
+.dup-row-head .dim, .dup-row { font-size: 12px; }
+.dup-choices { display: grid; gap: 6px; margin-bottom: 8px; }
+.dup-choices label { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-dim); cursor: pointer; font-weight: 400; }
+.dup-choices input { accent-color: var(--accent); width: 15px; height: 15px; }
+.dup-newname label { font-size: 12px; color: var(--text-dim); display: block; }
+.dup-newname input { margin-top: 4px; }

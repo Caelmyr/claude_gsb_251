@@ -79,7 +79,7 @@ def main():
     ]
     created = 0
     for name, img in fixtures:
-        rec = store.save_upload(_bytes(img), name)
+        rec, _status = store.save_upload(_bytes(img), name)
         if rec.get("filename") == name:
             created += 1
         print(f"  {name} -> {rec['width']}x{rec['height']} (id={rec['id'][:12]}…)")

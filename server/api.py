@@ -35,16 +35,33 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 # ---------------------------------------------------------------------------
 # 工具
 # ---------------------------------------------------------------------------
-def _image_view(rec):
-    """给前端用的图像记录视图（附加缩略图/文件 URL）。"""
+def _image_view(rec, dup_count=None):
+    """给前端用的图像记录视图（附加缩略图/文件 URL 与重复上传信息）。"""
+    if dup_count is None:
+        dup_count = len(image_store.find_duplicates(rec["hash"]))
     return {
         "id": rec["id"], "filename": rec["filename"], "format": rec["format"],
         "width": rec["width"], "height": rec["height"],
         "size_bytes": rec["size_bytes"], "created_at": rec["created_at"],
         "tags": rec.get("tags", []), "note": rec.get("note", ""),
         "annotations": rec.get("annotations", []),
+        "hash": rec["hash"],
+        "dup_count": dup_count,
         "thumbnail_url": f"/api/images/{rec['id']}/thumbnail",
         "file_url": f"/api/images/{rec['id']}/file",
+    }
+
+
+def _duplicate_view(rec, upload_name):
+    """重复上传提示里描述一条已有记录。"""
+    return {
+        "id": rec["id"], "filename": rec["filename"],
+        "created_at": rec["created_at"],
+        "tags": rec.get("tags", []),
+        "dup_count": len(image_store.find_duplicates(rec["hash"])),
+        "thumbnail_url": f"/api/images/{rec['id']}/thumbnail",
+        "file_url": f"/api/images/{rec['id']}/file",
+        "upload_name": upload_name,
     }
 
 
@@ -147,28 +164,75 @@ def reconcile():
 # ---------------------------------------------------------------------------
 @bp.get("/images")
 def list_images():
-    return jsonify({"images": [_image_view(r) for r in image_store.list_records()]})
+    recs = image_store.list_records()
+    # 预统计每个内容哈希的记录数，避免逐条全表扫描
+    counts = {}
+    for r in recs:
+        counts[r["hash"]] = counts.get(r["hash"], 0) + 1
+    return jsonify({"images": [_image_view(r, dup_count=counts.get(r["hash"], 1)) for r in recs]})
 
 
 @bp.post("/images")
 def upload_images():
+    """上传图像。
+
+    重复内容（SHA-256 相同）不再静默吞掉新名字，按表单字段 ``dup_policy`` 处理：
+      - "ask"（默认）：重复项不写入，放进响应 duplicates，由前端弹窗让用户选择；
+      - "copy"       ：每张图都建独立记录，文件名/标签各自保留；
+      - "reuse"      ：沿用最早记录（旧的自动去重行为）；
+      - "overwrite"  ：保留最早记录，但把文件名改成本次上传名。
+    也可用 ``policies``（JSON，{"客户端本地文件 key": "copy"}）逐文件指定。
+    ``names``（JSON，{"下标": "自定义文件名"}）用于「建新副本」时覆盖浏览器给的文件名。
+    """
     files = request.files.getlist("files")
     if not files:
         return jsonify({"error": "未收到文件"}), 400
-    saved, skipped = [], []
-    for f in files:
+
+    default_policy = request.form.get("dup_policy", "ask")
+    if default_policy not in ("ask", "copy", "reuse", "overwrite"):
+        default_policy = "ask"
+    try:
+        per_file = json.loads(request.form.get("policies") or "{}")
+    except (ValueError, TypeError):
+        per_file = {}
+    try:
+        names = json.loads(request.form.get("names") or "{}")
+    except (ValueError, TypeError):
+        names = {}
+
+    saved, skipped, duplicates = [], [], []
+    for idx, f in enumerate(files):
         data = f.read()
         if len(data) > config.MAX_UPLOAD_BYTES:
             skipped.append({"filename": f.filename, "reason": "超过大小限制"})
             continue
         if not data:
             continue
+        policy = per_file.get(str(idx)) or per_file.get(f.filename or "") or default_policy
+        if policy not in ("ask", "copy", "reuse", "overwrite"):
+            policy = default_policy
+        upload_name = names.get(str(idx)) or f.filename or "upload"
         try:
-            rec = image_store.save_upload(data, f.filename or "upload")
-            saved.append(_image_view(rec))
+            rec, status = image_store.save_upload(data, upload_name,
+                                                  on_duplicate=policy)
         except Exception as exc:  # noqa: BLE001
-            skipped.append({"filename": f.filename, "reason": str(exc)})
-    return jsonify({"saved": saved, "skipped": skipped})
+            skipped.append({"filename": upload_name, "reason": str(exc)})
+            continue
+
+        if status == "duplicate":
+            # 同内容记录可能有多条，全部返回，便于前端展示「已上传 N 次」
+            same = image_store.find_duplicates(rec["hash"])
+            duplicates.append({
+                "index": idx,
+                "filename": upload_name,
+                "hash": rec["hash"],
+                "existing": [_duplicate_view(r, upload_name) for r in same],
+            })
+        else:
+            view = _image_view(rec)
+            view["upload_status"] = status
+            saved.append(view)
+    return jsonify({"saved": saved, "skipped": skipped, "duplicates": duplicates})
 
 
 @bp.get("/images/<image_id>")
@@ -193,6 +257,17 @@ def delete_image(image_id):
     if not image_store.delete(image_id):
         return jsonify({"error": "not found"}), 404
     return jsonify({"ok": True})
+
+
+@bp.get("/images/<image_id>/duplicates")
+def image_duplicates(image_id):
+    """列出与该图像内容完全相同（SHA-256 一致）的全部记录，含自身，按上传时间正序。"""
+    rec = image_store.get(image_id)
+    if not rec:
+        return jsonify({"error": "not found"}), 404
+    same = image_store.find_duplicates(rec["hash"])
+    return jsonify({"count": len(same),
+                    "images": [_image_view(r, dup_count=len(same)) for r in same]})
 
 
 @bp.get("/images/<image_id>/file")

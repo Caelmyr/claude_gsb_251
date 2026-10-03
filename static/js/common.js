@@ -89,6 +89,7 @@ window.Common = (function () {
       <div class="card" data-id="${esc(im.id)}">
         <img class="thumb" src="${esc(im.thumbnail_url)}" loading="lazy" draggable="false">
         <span class="card-badge">${im.width}×${im.height}</span>
+        ${im.dup_count > 1 ? `<span class="card-dup" title="相同内容已上传 ${im.dup_count} 次">🔁 ${im.dup_count}</span>` : ""}
         <div class="card-meta">
           <div class="card-name" title="${esc(im.filename)}">${esc(im.filename)}</div>
           <div class="card-dim">${fmtBytes(im.size_bytes)} · ${fmtDate(im.created_at)}</div>

@@ -71,7 +71,7 @@ def main():
     }
     ids = {}
     for name, img in fixtures.items():
-        rec = image_store.save_upload(_to_bytes(img), name)
+        rec, _status = image_store.save_upload(_to_bytes(img), name)
         ids[name] = rec["id"]
         print(f"  上传 {name} -> id={rec['id'][:12]}..  {rec['width']}x{rec['height']}")
 
